@@ -576,3 +576,18 @@ input, textarea { font-family: inherit; color: inherit; }
 }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translateX(-50%); } }
 .toast .ic { color: var(--accent); margin-right: 6px; }
+
+/* ===== Cloud loading ===== */
+.cloud-loading {
+  min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+}
+.cloud-spinner {
+  width: 38px; height: 38px;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+.cloud-msg { font-size: 13px; color: var(--text-dim); }
+@keyframes spin { to { transform: rotate(360deg); } }

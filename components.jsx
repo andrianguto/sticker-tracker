@@ -1,13 +1,11 @@
 /* Sticker Tracker — UI components (Login, Sticker, Sheet, Toast, BottomNav) */
 const { useState: useStateC, useEffect: useEffectC, useRef: useRefC } = React;
 
-const STORAGE_KEY = "stickerTrackerV1";       // legacy single-user key
-const PIN_KEY = "stickerTrackerPinV1";         // legacy single-user PIN
+const STORAGE_KEY = "stickerTrackerV1";
+const PIN_KEY = "stickerTrackerPinV1";
 const ONBOARDED_KEY = "stickerTrackerOnboardedV1";
 const SETUP_MODE_KEY = "stickerTrackerSetupModeV1";
-
-// Multi-user (code word + PIN) keys
-const USERS_KEY = "stickerTrackerUsersV1";      // { [codeword]: pin }
+const USERS_KEY = "stickerTrackerUsersV1";
 const ACTIVE_USER_KEY = "stickerTrackerActiveUserV1";
 
 function normalizeCode(c) { return (c || "").trim().toLowerCase(); }
@@ -16,7 +14,6 @@ function loadUsers() {
   try { return JSON.parse(localStorage.getItem(USERS_KEY) || "{}"); } catch { return {}; }
 }
 function saveUsers(u) { localStorage.setItem(USERS_KEY, JSON.stringify(u)); }
-
 function userKey(codeword, base) { return `${base}::${normalizeCode(codeword)}`; }
 
 // --- Persistence helpers ------------------------------------------------
@@ -31,7 +28,6 @@ function saveState(codeword, s) {
   try { localStorage.setItem(userKey(codeword, STORAGE_KEY), JSON.stringify(s)); } catch {}
 }
 
-// state[id] = { c: count, name?: string }
 function stickerCount(state, id) { return state[id]?.c || 0; }
 function isHave(state, id) { return stickerCount(state, id) >= 1; }
 function dupCount(state, id) { return Math.max(0, stickerCount(state, id) - 1); }
@@ -59,7 +55,7 @@ function setStickerName(state, id, name) {
 
 // --- Missing / Duplicates builders --------------------------------------
 function buildMissing(state) {
-  const result = []; // [{team, missing: [ids]}]
+  const result = [];
   for (const t of window.ALL_TEAMS) {
     const ids = [];
     for (let i = 1; i <= window.TEAM_STICKERS_PER_TEAM; i++) {
@@ -105,68 +101,99 @@ function Toast({ msg }) {
   return <div className="toast"><span className="ic">✓</span>{msg}</div>;
 }
 
-// --- Login (multi-user: code word + PIN) --------------------------------
+// --- Login (multi-user: code word + PIN, cloud-backed) -------------------
 function Login({ onUnlock }) {
   const users = loadUsers();
   const userCount = Object.keys(users).length;
   const hasLegacy = !!localStorage.getItem(PIN_KEY) && userCount === 0;
 
-  const [mode, setMode] = useStateC(() => (userCount === 0 && !hasLegacy) ? "signup" : (hasLegacy ? "migrate" : "signin"));
+  const [mode, setMode] = useStateC(() =>
+    userCount === 0 && !hasLegacy ? "signup" : hasLegacy ? "migrate" : "signin"
+  );
   const [code, setCode] = useStateC("");
   const [pin, setPin] = useStateC("");
   const [confirm, setConfirm] = useStateC("");
   const [err, setErr] = useStateC("");
+  const [submitting, setSubmitting] = useStateC(false);
 
-  const submit = () => {
+  const submit = async () => {
     setErr("");
     const c = normalizeCode(code);
     if (!c) return setErr("Pick a code word.");
     if (c.length > 24) return setErr("Code word too long (max 24 chars).");
     if (pin.length < 4) return setErr("PIN needs at least 4 digits.");
 
+    setSubmitting(true);
+
     if (mode === "signin") {
-      const existing = loadUsers();
-      if (existing[c] === pin) {
+      let existing = loadUsers();
+      let userPin = existing[c];
+
+      if (!userPin) {
+        // Not cached locally — look up in Firestore
+        const cloudUser = await cloudGetUser(c);
+        if (cloudUser) {
+          userPin = cloudUser.pin;
+          existing[c] = userPin;
+          saveUsers(existing); // cache it for offline use
+        }
+      }
+
+      if (userPin === pin) {
         localStorage.setItem(ACTIVE_USER_KEY, c);
         onUnlock(c);
       } else {
         setErr("Wrong code word or PIN.");
+        setSubmitting(false);
       }
       return;
     }
 
     if (mode === "signup") {
-      if (pin !== confirm) return setErr("PINs don't match.");
+      if (pin !== confirm) { setSubmitting(false); return setErr("PINs don't match."); }
       const existing = loadUsers();
-      if (existing[c]) return setErr("Code word taken on this device.");
+      if (existing[c]) { setSubmitting(false); return setErr("Code word taken on this device."); }
+
+      // Also check Firestore so two devices can't grab the same code word
+      const takenOnCloud = await cloudCheckCodeword(c);
+      if (takenOnCloud) { setSubmitting(false); return setErr("Code word already taken. Choose another."); }
+
       existing[c] = pin;
       saveUsers(existing);
+      await cloudCreateUser(c, pin);
       localStorage.setItem(ACTIVE_USER_KEY, c);
       onUnlock(c);
       return;
     }
 
     if (mode === "migrate") {
-      // Match legacy PIN, then move state into namespaced storage
       const legacyPin = localStorage.getItem(PIN_KEY);
-      if (pin !== legacyPin) return setErr("PIN doesn't match your existing account.");
+      if (pin !== legacyPin) { setSubmitting(false); return setErr("PIN doesn't match your existing account."); }
       const existing = loadUsers();
-      if (existing[c]) return setErr("Code word taken on this device.");
+      if (existing[c]) { setSubmitting(false); return setErr("Code word taken on this device."); }
+
+      const takenOnCloud = await cloudCheckCodeword(c);
+      if (takenOnCloud) { setSubmitting(false); return setErr("Code word already taken. Choose another."); }
+
       existing[c] = pin;
       saveUsers(existing);
-      // Migrate state, onboarded flag
-      const oldState = localStorage.getItem(STORAGE_KEY);
-      if (oldState) localStorage.setItem(userKey(c, STORAGE_KEY), oldState);
+
+      const oldStateRaw = localStorage.getItem(STORAGE_KEY);
+      const oldState = oldStateRaw ? JSON.parse(oldStateRaw) : {};
+      if (oldStateRaw) localStorage.setItem(userKey(c, STORAGE_KEY), oldStateRaw);
       const oldOnb = localStorage.getItem(ONBOARDED_KEY);
       if (oldOnb) localStorage.setItem(userKey(c, ONBOARDED_KEY), oldOnb);
       const oldMode = localStorage.getItem(SETUP_MODE_KEY);
       if (oldMode) localStorage.setItem(userKey(c, SETUP_MODE_KEY), oldMode);
-      // Clean up legacy
       localStorage.removeItem(STORAGE_KEY);
       localStorage.removeItem(PIN_KEY);
       localStorage.removeItem(ONBOARDED_KEY);
       localStorage.removeItem(SETUP_MODE_KEY);
       localStorage.setItem(ACTIVE_USER_KEY, c);
+
+      await cloudCreateUser(c, pin);
+      if (Object.keys(oldState).length > 0) await cloudSaveState(c, oldState);
+
       onUnlock(c);
       return;
     }
@@ -202,6 +229,7 @@ function Login({ onUnlock }) {
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="e.g. messi-fan"
+            disabled={submitting}
           />
 
           <label className="login-label">PIN</label>
@@ -214,6 +242,7 @@ function Login({ onUnlock }) {
             maxLength={8}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
             placeholder="••••"
+            disabled={submitting}
             onKeyDown={(e) => { if (e.key === "Enter") (mode === "signup" ? document.getElementById("c2")?.focus() : submit()); }}
           />
 
@@ -229,6 +258,7 @@ function Login({ onUnlock }) {
                 maxLength={8}
                 onChange={(e) => setConfirm(e.target.value.replace(/\D/g, ""))}
                 placeholder="confirm"
+                disabled={submitting}
                 onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
               />
             </>
@@ -236,18 +266,21 @@ function Login({ onUnlock }) {
         </div>
 
         <div className="login-err">{err}&nbsp;</div>
-        <button className="btn-primary" onClick={submit}
-                disabled={!code.trim() || pin.length < 4 || (mode === "signup" && confirm.length < 4)}>
-          {mode === "signin" ? "Unlock" : mode === "migrate" ? "Save & Unlock" : "Create account"}
+        <button
+          className="btn-primary"
+          onClick={submit}
+          disabled={submitting || !code.trim() || pin.length < 4 || (mode === "signup" && confirm.length < 4)}
+        >
+          {submitting ? "Please wait…" : mode === "signin" ? "Unlock" : mode === "migrate" ? "Save & Unlock" : "Create account"}
         </button>
 
         <div className="login-switch">
-          {mode === "signin" && (
+          {mode === "signin" && !submitting && (
             <button className="btn-ghost" onClick={() => { setMode("signup"); setErr(""); setPin(""); setConfirm(""); setCode(""); }}>
               + Create another account on this device
             </button>
           )}
-          {mode === "signup" && userCount > 0 && (
+          {mode === "signup" && userCount > 0 && !submitting && (
             <button className="btn-ghost" onClick={() => { setMode("signin"); setErr(""); setPin(""); setConfirm(""); setCode(""); }}>
               ← Back to sign in
             </button>
@@ -258,7 +291,7 @@ function Login({ onUnlock }) {
           <div className="who-tip">Accounts on this device: <b>{Object.keys(users).join(", ")}</b></div>
         )}
 
-        {mode !== "migrate" && (
+        {mode !== "migrate" && !submitting && (
           <button className="btn-ghost danger" onClick={() => {
             const ok = window.confirm("Reset the app? This erases every account and album on this device.");
             if (ok) { localStorage.clear(); location.reload(); }
@@ -275,7 +308,7 @@ function Sticker({ id, state, onTap, dim }) {
   const have = c >= 1;
   const dup = c >= 2;
   const name = getName(state, id);
-  const num = id.startsWith("FWC") ? id.split("-")[1] : id.split("-")[1];
+  const num = id.split("-")[1];
   return (
     <button
       className={`sticker${have ? " have" : ""}${dup ? " dup" : ""}${dim ? " dim" : ""}`}

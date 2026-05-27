@@ -1,5 +1,5 @@
 /* Sticker Tracker — Service Worker */
-const CACHE = "sticker-tracker-v1";
+const CACHE = "sticker-tracker-v2";
 
 // Local files to pre-cache on install
 const LOCAL_ASSETS = [
@@ -13,6 +13,8 @@ const LOCAL_ASSETS = [
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
+  "./firebase-config.js",
+  "./db.js",
 ];
 
 self.addEventListener("install", (e) => {

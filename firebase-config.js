@@ -9,12 +9,12 @@
 // ============================================================
 
 const FIREBASE_CONFIG = {
-  apiKey:            "YOUR_API_KEY",
-  authDomain:        "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId:         "YOUR_PROJECT_ID",
-  storageBucket:     "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId:             "YOUR_APP_ID"
+  apiKey:            "AIzaSyCpv2FcHWx8a6bAD2YtbPVaObVFCyEpFC4",
+  authDomain:        "sticker-tracker-76175.firebaseapp.com",
+  projectId:         "sticker-tracker-76175",
+  storageBucket:     "sticker-tracker-76175.firebasestorage.app",
+  messagingSenderId: "989637989257",
+  appId:             "1:989637989257:web:e260e10b2ab87ddeed8758"
 };
 
 firebase.initializeApp(FIREBASE_CONFIG);

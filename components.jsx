@@ -280,9 +280,9 @@ function Login({ onUnlock }) {
               + Create another account on this device
             </button>
           )}
-          {mode === "signup" && userCount > 0 && !submitting && (
+          {mode === "signup" && !submitting && (
             <button className="btn-ghost" onClick={() => { setMode("signin"); setErr(""); setPin(""); setConfirm(""); setCode(""); }}>
-              ← Back to sign in
+              Already have an account? Sign in
             </button>
           )}
         </div>

@@ -566,6 +566,34 @@ input, textarea { font-family: inherit; color: inherit; }
 
 .hint-row { text-align: center; color: var(--text-faint); font-size: 11px; padding: 8px 0 20px; }
 
+/* ===== Complete team card ===== */
+.team-card.complete {
+  border-color: rgba(212, 255, 58, 0.45);
+  background: linear-gradient(135deg, #1b2212 0%, #15171a 100%);
+  animation: teamComplete 0.65s cubic-bezier(0.2, 0.8, 0.2, 1.1) both;
+}
+.team-card.complete .team-name { color: var(--accent); }
+.team-card.complete .team-code { color: var(--accent); background: rgba(212,255,58,0.1); }
+.complete-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: 5px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink);
+  font-size: 9px; font-weight: 800;
+}
+.special-card.complete { border-color: rgba(212, 255, 58, 0.45); }
+@keyframes teamComplete {
+  0%   { transform: scale(1); box-shadow: none; }
+  40%  { transform: scale(1.022); box-shadow: 0 0 0 3px rgba(212,255,58,0.28), 0 6px 20px rgba(212,255,58,0.1); }
+  100% { transform: scale(1); box-shadow: 0 0 0 1px rgba(212,255,58,0.07); }
+}
+
+/* ===== Alphabet jumper active state ===== */
+.jp.jp-active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+/* ===== Search bar inside list views ===== */
+.list-search { padding: 0 14px 12px; }
+
 /* Toast */
 .toast {
   position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%);

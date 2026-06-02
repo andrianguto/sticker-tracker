@@ -88,6 +88,12 @@ export const StatsView: React.FC<StatsViewProps> = ({
             </div>
             <button className="manage-btn inline" onClick={onLogout}>🔒 Lock / switch</button>
           </div>
+          <div className="acct-row" style={{ marginTop: '12px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '12px' }}>
+            <div>
+              <div className="acct-lbl">App Version</div>
+              <div className="acct-name">v{import.meta.env.VITE_APP_VERSION || '1.0.0'}</div>
+            </div>
+          </div>
         </div>
         <div className="stats-card">
           <h3>Manage</h3>

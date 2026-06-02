@@ -1,9 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { VitePWA } from 'vite-plugin-pwa';
+import { VitePWA, ManifestOptions } from 'vite-plugin-pwa';
+import pkg from './package.json';
 
 export default defineConfig({
   base: '/sticker-tracker/',
+  define: {
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version),
+  },
   plugins: [
     react(),
     VitePWA({
@@ -12,6 +16,7 @@ export default defineConfig({
       manifest: {
         name: 'Sticker Tracker — World Cup 2026',
         short_name: 'Sticker Tracker',
+        version: pkg.version,
         description: 'Track your World Cup 2026 sticker album — mark owned, missing and duplicates',
         theme_color: '#0b0c0e',
         background_color: '#0b0c0e',
@@ -33,7 +38,7 @@ export default defineConfig({
             purpose: 'any maskable'
           }
         ]
-      },
+      } as Partial<ManifestOptions> & { version?: string },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
         runtimeCaching: [

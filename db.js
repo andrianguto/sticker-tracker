@@ -52,17 +52,20 @@ async function cloudCreateUser(codeword, pin) {
 // never deleted in the cloud and reappear as "owned" on the next load.
 // update() replaces the named `state` field outright and leaves `pin` intact.
 async function cloudSaveState(codeword, state) {
-  if (!isCloudReady()) return;
+  if (!isCloudReady()) return false;
   const docRef = window.db.collection("users").doc(codeword);
   try {
     await docRef.update({ state, updatedAt: new Date() });
+    return true;
   } catch (e) {
     // Doc doesn't exist yet (e.g. created on another device): create it.
     // There's no prior state to merge against here, so merge is safe.
     try {
       await docRef.set({ state, updatedAt: new Date() }, { merge: true });
+      return true;
     } catch (e2) {
       console.warn("[cloud] save state failed:", e2.message);
+      return false;
     }
   }
 }

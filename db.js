@@ -45,16 +45,28 @@ async function cloudCreateUser(codeword, pin) {
   }
 }
 
-// Persist sticker state (merge so pin field is preserved)
+// Persist sticker state.
+// IMPORTANT: use update() (not set with merge) so the whole `state` map is
+// REPLACED, not deep-merged. With set({merge:true}) Firestore recursively
+// merges map fields, so un-marked/removed stickers (keys deleted locally) are
+// never deleted in the cloud and reappear as "owned" on the next load.
+// update() replaces the named `state` field outright and leaves `pin` intact.
 async function cloudSaveState(codeword, state) {
-  if (!isCloudReady()) return;
+  if (!isCloudReady()) return false;
+  const docRef = window.db.collection("users").doc(codeword);
   try {
-    await window.db.collection("users").doc(codeword).set(
-      { state, updatedAt: new Date() },
-      { merge: true }
-    );
+    await docRef.update({ state, updatedAt: new Date() });
+    return true;
   } catch (e) {
-    console.warn("[cloud] save state failed:", e.message);
+    // Doc doesn't exist yet (e.g. created on another device): create it.
+    // There's no prior state to merge against here, so merge is safe.
+    try {
+      await docRef.set({ state, updatedAt: new Date() }, { merge: true });
+      return true;
+    } catch (e2) {
+      console.warn("[cloud] save state failed:", e2.message);
+      return false;
+    }
   }
 }
 

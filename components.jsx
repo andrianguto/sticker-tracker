@@ -27,6 +27,18 @@ function loadState(codeword) {
 function saveState(codeword, s) {
   try { localStorage.setItem(userKey(codeword, STORAGE_KEY), JSON.stringify(s)); } catch {}
 }
+function loadStateMeta(codeword) {
+  try {
+    const raw = localStorage.getItem(userKey(codeword, STORAGE_KEY + "::meta"));
+    if (!raw) return { synced: true };
+    return JSON.parse(raw);
+  } catch { return { synced: true }; }
+}
+function saveStateMeta(codeword, meta) {
+  try {
+    localStorage.setItem(userKey(codeword, STORAGE_KEY + "::meta"), JSON.stringify(meta));
+  } catch {}
+}
 
 function stickerCount(state, id) { return state[id]?.c || 0; }
 function isHave(state, id) { return stickerCount(state, id) >= 1; }
@@ -412,7 +424,7 @@ function BottomNav({ tab, setTab }) {
 Object.assign(window, {
   STORAGE_KEY, PIN_KEY, ONBOARDED_KEY, SETUP_MODE_KEY,
   USERS_KEY, ACTIVE_USER_KEY, normalizeCode, loadUsers, saveUsers, userKey,
-  loadState, saveState,
+  loadState, saveState, loadStateMeta, saveStateMeta,
   stickerCount, isHave, dupCount, getName, setStickerCount, setStickerName,
   buildMissing, buildDuplicates, copyText,
   Toast, Login, Sticker, StickerSheet, BottomNav,

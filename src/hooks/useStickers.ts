@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { doc, onSnapshot, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, setDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
-import { AlbumState } from '../types';
+import { AlbumState, StickerRecord } from '../types';
 import { getUserStorageKey } from './useAuth';
 import { ALL_TEAMS, FWC_FRONT, FWC_BACK, TEAM_STICKERS_PER_TEAM } from '../data';
 
@@ -40,6 +40,42 @@ export const saveLocalStateMeta = (codeword: string, meta: { synced: boolean }) 
     localStorage.setItem(getUserStorageKey(codeword, STORAGE_META_KEY), JSON.stringify(meta));
   } catch (err) {
     console.error("[LocalMeta] Save failed:", err);
+  }
+};
+
+const STORAGE_PENDING_KEY = "stickerTrackerV1::pending";
+
+export const savePendingChanges = (
+  codeword: string,
+  pending: Map<string, StickerRecord | null>,
+  inFlight: Map<string, StickerRecord | null>
+) => {
+  try {
+    const obj: Record<string, StickerRecord | null> = {};
+    for (const [id, val] of inFlight) {
+      obj[id] = val;
+    }
+    for (const [id, val] of pending) {
+      obj[id] = val;
+    }
+    localStorage.setItem(getUserStorageKey(codeword, STORAGE_PENDING_KEY), JSON.stringify(obj));
+  } catch (err) {
+    console.error("[PendingState] Save failed:", err);
+  }
+};
+
+export const loadPendingChanges = (codeword: string): Map<string, StickerRecord | null> => {
+  try {
+    const raw = localStorage.getItem(getUserStorageKey(codeword, STORAGE_PENDING_KEY));
+    if (!raw) return new Map();
+    const obj: Record<string, StickerRecord | null> = JSON.parse(raw);
+    const map = new Map<string, StickerRecord | null>();
+    for (const [id, val] of Object.entries(obj)) {
+      map.set(id, val);
+    }
+    return map;
+  } catch {
+    return new Map();
   }
 };
 
@@ -127,9 +163,15 @@ export const useStickers = (activeUser: string | null) => {
   const [localState, setLocalState] = useState<AlbumState>({});
   const [loading, setLoading] = useState(true);
   const cloudSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Two-queue write pipeline
+  const pendingChangesRef = useRef<Map<string, StickerRecord | null>>(new Map());
+  const inFlightChangesRef = useRef<Map<string, StickerRecord | null>>(new Map());
 
-  // Firestore update helper that avoids phantom owned resurrecting stickers.
-  // Replaces the 'state' map outright while leaving other fields (like PIN) intact.
+  // Ref to break circular dependency between scheduleFlush and flushToCloud
+  const flushToCloudRef = useRef<(() => Promise<void>) | undefined>(undefined);
+
+  // Full-document replace. Used only for whole-album operations (reset).
   const syncToCloud = useCallback(async (stateToSave: AlbumState): Promise<boolean> => {
     if (!activeUser) return false;
     const docRef = doc(db, "users", activeUser);
@@ -154,6 +196,88 @@ export const useStickers = (activeUser: string | null) => {
     }
   }, [activeUser]);
 
+  // 500ms debounced flush trigger.
+  const scheduleFlush = useCallback(() => {
+    if (!activeUser) return;
+    if (cloudSaveTimer.current) {
+      clearTimeout(cloudSaveTimer.current);
+    }
+    cloudSaveTimer.current = setTimeout(() => { 
+      flushToCloudRef.current?.(); 
+    }, 500);
+  }, [activeUser]);
+
+  // Flush queued per-sticker edits to Firestore using field-level writes.
+  // Only allows one active in-flight write at a time.
+  const flushToCloud = useCallback(async () => {
+    if (!activeUser) return;
+    if (inFlightChangesRef.current.size > 0) return; // Wait for active write to finish
+
+    const flushing = pendingChangesRef.current;
+    if (flushing.size === 0) return;
+
+    // Move pending changes to in-flight
+    inFlightChangesRef.current = flushing;
+    pendingChangesRef.current = new Map();
+    savePendingChanges(activeUser, pendingChangesRef.current, inFlightChangesRef.current);
+
+    const docRef = doc(db, "users", activeUser);
+    const updates: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    for (const [id, val] of flushing) {
+      updates[`state.${id}`] = val === null ? deleteField() : val;
+    }
+
+    try {
+      await updateDoc(docRef, updates);
+      
+      // Success! Clear in-flight
+      inFlightChangesRef.current = new Map();
+      savePendingChanges(activeUser, pendingChangesRef.current, inFlightChangesRef.current);
+
+      if (pendingChangesRef.current.size > 0) {
+        scheduleFlush();
+      } else {
+        saveLocalStateMeta(activeUser, { synced: true });
+      }
+    } catch {
+      // Document might not exist yet: create it from current local state.
+      try {
+        await setDoc(docRef, {
+          state: loadLocalState(activeUser),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        
+        // Success! Clear in-flight
+        inFlightChangesRef.current = new Map();
+        savePendingChanges(activeUser, pendingChangesRef.current, inFlightChangesRef.current);
+
+        if (pendingChangesRef.current.size > 0) {
+          scheduleFlush();
+        } else {
+          saveLocalStateMeta(activeUser, { synced: true });
+        }
+      } catch (err) {
+        console.warn("[Stickers] Cloud sync failed:", err);
+        // Move in-flight back to pending (without overwriting newer edits in pending)
+        for (const [id, val] of flushing) {
+          if (!pendingChangesRef.current.has(id)) {
+            pendingChangesRef.current.set(id, val);
+          }
+        }
+        inFlightChangesRef.current = new Map();
+        savePendingChanges(activeUser, pendingChangesRef.current, inFlightChangesRef.current);
+        
+        // Retry
+        scheduleFlush();
+      }
+    }
+  }, [activeUser, scheduleFlush]);
+
+  // Keep the ref updated with the latest flushToCloud callback
+  useEffect(() => {
+    flushToCloudRef.current = flushToCloud;
+  }, [flushToCloud]);
+
   // Set up real-time listener inside useEffect
   useEffect(() => {
     if (!activeUser) {
@@ -164,52 +288,87 @@ export const useStickers = (activeUser: string | null) => {
 
     setLoading(true);
 
-    // Initial check: if local cache is dirty, sync it immediately
     const initialMeta = loadLocalStateMeta(activeUser);
     const initialData = loadLocalState(activeUser);
 
-    if (initialMeta.synced === false) {
-      console.info("[LiveSync] Unsynced changes found on mount. Pushing immediately…");
-      syncToCloud(initialData).then((success) => {
-        if (success) {
-          saveLocalStateMeta(activeUser, { synced: true });
-        }
-      });
+    // Load persisted pending changes from localStorage on mount
+    const savedPending = loadPendingChanges(activeUser);
+    pendingChangesRef.current = savedPending;
+
+    if (savedPending.size > 0) {
+      console.info(`[LiveSync] Found ${savedPending.size} unsynced changes on mount. Scheduling flush…`);
+      saveLocalStateMeta(activeUser, { synced: false });
+      scheduleFlush();
     }
 
     const docRef = doc(db, "users", activeUser);
+    let isFirst = true;
+
     const unsubscribe = onSnapshot(docRef, 
       (docSnap) => {
-        // If we have pending local writes, Firestore optimistically updates the cache.
-        // Ignore the server snapshot in this case.
-        if (docSnap.metadata.hasPendingWrites) {
+        if (!docSnap.exists()) {
+          // Document does not exist yet in cloud: fall back to local
+          setLocalState(loadLocalState(activeUser));
           setLoading(false);
           return;
         }
 
-        // Verify if local changes are dirty (race-condition protection)
-        const currentMeta = loadLocalStateMeta(activeUser);
-        if (currentMeta.synced === false) {
-          const currentData = loadLocalState(activeUser);
-          syncToCloud(currentData).then((success) => {
-            if (success) {
+        const cloudState: AlbumState = docSnap.data().state || {};
+
+        if (isFirst) {
+          isFirst = false;
+          // Legacy migration check: if initialMeta.synced is false, but savedPending was empty,
+          // compare local data and cloudState on the first snapshot.
+          if (initialMeta.synced === false && savedPending.size === 0) {
+            console.info("[LiveSync] Legacy unsynced state detected. Comparing with cloud state…");
+            const migratedPending = new Map<string, StickerRecord | null>();
+            for (const [id, localVal] of Object.entries(initialData)) {
+              const cloudVal = cloudState[id];
+              if (!cloudVal || cloudVal.c !== localVal.c || cloudVal.name !== localVal.name) {
+                migratedPending.set(id, localVal);
+              }
+            }
+
+            if (migratedPending.size > 0) {
+              console.info(`[LiveSync] Migrated ${migratedPending.size} legacy unsynced changes.`);
+              pendingChangesRef.current = migratedPending;
+              savePendingChanges(activeUser, pendingChangesRef.current, inFlightChangesRef.current);
+              saveLocalStateMeta(activeUser, { synced: false });
+              scheduleFlush();
+            } else {
               saveLocalStateMeta(activeUser, { synced: true });
             }
-          });
-          setLoading(false);
-          return;
+          }
         }
 
-        if (docSnap.exists()) {
-          const cloudState = docSnap.data().state || {};
-          saveLocalState(activeUser, cloudState);
-          saveLocalStateMeta(activeUser, { synced: true });
-          setLocalState(cloudState);
-        } else {
-          // Document does not exist yet in cloud: fall back to local
-          const fallback = loadLocalState(activeUser);
-          setLocalState(fallback);
-        }
+        const pending = pendingChangesRef.current;
+        const inFlight = inFlightChangesRef.current;
+
+        // Accept the server's view, but keep our own un-flushed and in-flight edits on top.
+        setLocalState(prev => {
+          let next = cloudState;
+          if (pending.size > 0 || inFlight.size > 0) {
+            next = { ...cloudState };
+            
+            // Merge in-flight changes first
+            for (const id of inFlight.keys()) {
+              const localVal = prev[id];
+              if (localVal !== undefined) next[id] = localVal;
+              else delete next[id];
+            }
+            
+            // Merge pending changes (pending takes precedence over in-flight)
+            for (const id of pending.keys()) {
+              const localVal = prev[id];
+              if (localVal !== undefined) next[id] = localVal;
+              else delete next[id];
+            }
+          }
+          saveLocalState(activeUser, next);
+          return next;
+        });
+
+        saveLocalStateMeta(activeUser, { synced: pending.size === 0 && inFlight.size === 0 });
         setLoading(false);
       },
       (err) => {
@@ -223,21 +382,7 @@ export const useStickers = (activeUser: string | null) => {
     return () => {
       unsubscribe();
     };
-  }, [activeUser, syncToCloud]);
-
-  // 500ms Debounced cloud save mechanism
-  const triggerCloudSave = useCallback((stateToSave: AlbumState) => {
-    if (!activeUser) return;
-    if (cloudSaveTimer.current) {
-      clearTimeout(cloudSaveTimer.current);
-    }
-    cloudSaveTimer.current = setTimeout(async () => {
-      const success = await syncToCloud(stateToSave);
-      if (success) {
-        saveLocalStateMeta(activeUser, { synced: true });
-      }
-    }, 500); // 500ms per instructions
-  }, [activeUser, syncToCloud]);
+  }, [activeUser, scheduleFlush]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -252,10 +397,16 @@ export const useStickers = (activeUser: string | null) => {
       const next = setStickerCount(prev, id, count);
       saveLocalState(activeUser, next);
       saveLocalStateMeta(activeUser, { synced: false });
-      triggerCloudSave(next);
       return next;
     });
-  }, [activeUser, triggerCloudSave]);
+
+    const singleObj = setStickerCount({}, id, count);
+    const newVal = singleObj[id] ?? null;
+
+    pendingChangesRef.current.set(id, newVal);
+    savePendingChanges(activeUser, pendingChangesRef.current, inFlightChangesRef.current);
+    scheduleFlush();
+  }, [activeUser, scheduleFlush]);
 
   const setStickerPlayerName = useCallback((id: string, name: string) => {
     if (!activeUser) return;
@@ -263,14 +414,23 @@ export const useStickers = (activeUser: string | null) => {
       const next = setStickerName(prev, id, name);
       saveLocalState(activeUser, next);
       saveLocalStateMeta(activeUser, { synced: false });
-      triggerCloudSave(next);
       return next;
     });
-  }, [activeUser, triggerCloudSave]);
+
+    const singleObj = setStickerName({}, id, name);
+    const newVal = singleObj[id] ?? null;
+
+    pendingChangesRef.current.set(id, newVal);
+    savePendingChanges(activeUser, pendingChangesRef.current, inFlightChangesRef.current);
+    scheduleFlush();
+  }, [activeUser, scheduleFlush]);
 
   const resetAlbum = useCallback(async () => {
     if (!activeUser) return;
     if (cloudSaveTimer.current) clearTimeout(cloudSaveTimer.current);
+    pendingChangesRef.current = new Map();
+    inFlightChangesRef.current = new Map();
+    savePendingChanges(activeUser, new Map(), new Map());
 
     setLocalState({});
     saveLocalState(activeUser, {});

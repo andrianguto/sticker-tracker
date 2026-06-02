@@ -142,7 +142,26 @@ export const useAuth = () => {
     const { email, password, codeword: cleanCode } = getFirebaseCredentials(codeword, pin);
 
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      let userCredential;
+      try {
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential') {
+          const userDocRef = doc(db, "users", cleanCode);
+          const docSnap = await getDoc(userDocRef);
+          if (docSnap.exists() && docSnap.data().pin === pin) {
+            userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            await setDoc(userDocRef, {
+              uid: userCredential.user.uid,
+              updatedAt: serverTimestamp()
+            }, { merge: true });
+          } else {
+            throw authErr;
+          }
+        } else {
+          throw authErr;
+        }
+      }
       
       const userDocRef = doc(db, "users", cleanCode);
       const docSnap = await getDoc(userDocRef);
@@ -154,6 +173,13 @@ export const useAuth = () => {
           updatedAt: serverTimestamp(),
           uid: userCredential.user.uid
         });
+      } else {
+        if (!docSnap.data()?.uid) {
+          await setDoc(userDocRef, {
+            uid: userCredential.user.uid,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        }
       }
 
       const localUsers = localStorage.getItem(USERS_KEY) ? JSON.parse(localStorage.getItem(USERS_KEY)!) : {};

@@ -1,7 +1,6 @@
-// Sticker album data — generic World Cup 2026 tracker (not affiliated with any publisher)
-// Teams listed in group order, A through L
+import { Group, Team } from './types';
 
-window.GROUPS = [
+export const GROUPS: Group[] = [
   { id: "A", teams: [
     { code: "MEX", name: "Mexico",          flag: "🇲🇽" },
     { code: "RSA", name: "South Africa",    flag: "🇿🇦" },
@@ -76,32 +75,28 @@ window.GROUPS = [
   ]},
 ];
 
-window.TEAM_STICKERS_PER_TEAM = 20;
-window.FWC_COUNT = 19;
-// Album order: special stickers 1-8 sit at the front of the album (intro pages),
-// then groups A→L, then specials 9-19 at the back. Adjust here if your edition differs.
-window.FWC_FRONT_END = 8;
-window.FWC_FRONT = Array.from({ length: window.FWC_FRONT_END }, (_, i) => `FWC-${i + 1}`);
-window.FWC_BACK  = Array.from({ length: window.FWC_COUNT - window.FWC_FRONT_END }, (_, i) => `FWC-${i + 1 + window.FWC_FRONT_END}`);
+export const TEAM_STICKERS_PER_TEAM = 20;
+export const FWC_COUNT = 19;
+export const FWC_FRONT_END = 8;
 
-// Flat list of all teams in album order
-window.ALL_TEAMS = window.GROUPS.flatMap(g => g.teams.map(t => ({ ...t, group: g.id })));
+export const FWC_FRONT: string[] = Array.from({ length: FWC_FRONT_END }, (_, i) => `FWC-${i + 1}`);
+export const FWC_BACK: string[] = Array.from({ length: FWC_COUNT - FWC_FRONT_END }, (_, i) => `FWC-${i + 1 + FWC_FRONT_END}`);
 
-// Group accent colors (subtle band colors used as section headers — original palette)
-window.GROUP_COLORS = {
+export const ALL_TEAMS: Team[] = GROUPS.flatMap(g => g.teams.map(t => ({ ...t, group: g.id })));
+
+export const GROUP_COLORS: Record<string, string> = {
   A: "#3fa463", B: "#d23a3a", C: "#e7c93b", D: "#3a7fd2",
   E: "#e07b2a", F: "#1f9ea0", G: "#9b6dd1", H: "#56b8d4",
   I: "#7a4ed1", J: "#e8a3b1", K: "#d0397e", L: "#5fb3a4",
 };
 
-// All sticker IDs (for counts and "missing" generation)
-window.allStickerIds = function() {
-  const ids = [];
-  for (const t of window.ALL_TEAMS) {
-    for (let i = 1; i <= window.TEAM_STICKERS_PER_TEAM; i++) ids.push(`${t.code}-${i}`);
+export const allStickerIds = (): string[] => {
+  const ids: string[] = [];
+  for (const t of ALL_TEAMS) {
+    for (let i = 1; i <= TEAM_STICKERS_PER_TEAM; i++) ids.push(`${t.code}-${i}`);
   }
-  for (let i = 1; i <= window.FWC_COUNT; i++) ids.push(`FWC-${i}`);
+  for (let i = 1; i <= FWC_COUNT; i++) ids.push(`FWC-${i}`);
   return ids;
 };
 
-window.TOTAL_STICKERS = window.GROUPS.reduce((s, g) => s + g.teams.length, 0) * window.TEAM_STICKERS_PER_TEAM + window.FWC_COUNT;
+export const TOTAL_STICKERS = GROUPS.reduce((s, g) => s + g.teams.length, 0) * TEAM_STICKERS_PER_TEAM + FWC_COUNT;
